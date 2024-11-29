@@ -57,6 +57,18 @@ struct ContentView: View {
                 modelContext.delete(items[index])
             }
         }
+        .onAppear {
+            viewModel.messages.append("Welcome to the Chat!")
+        }
+    }
+
+    private func connectToServer() {
+        guard let port = UInt16(serverPort) else {
+            print("Invalid port number")
+            return
+        }
+        viewModel.connectToServer(serverAddress: serverAddress, serverPort: port)
+        isConnected = true
     }
 }
 
