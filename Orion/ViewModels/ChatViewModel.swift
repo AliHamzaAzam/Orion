@@ -54,7 +54,7 @@ class ChatViewModel: ObservableObject {
     }
 
     func filteredMessages(for recipient: UUID) -> [Message] {
-        return messages
+        return messages.filter({ $0.sender == recipient || $0.recipient == recipient })
     }
 
     func getContactName(for id: UUID) -> String {

@@ -18,7 +18,11 @@ class Server {
     private var symmetricKey: SymmetricKey?
     
     private var messageQueues: [UUID: [Message]] = [:] // Queues to store messages for offline clients
-
+    private var groups: [Group] = [
+        Group(id: UUID(), name: "Developers", members: [UUID(), UUID()]),
+        Group(id: UUID(), name: "Designers", members: [UUID(), UUID()])
+    ]
+    
     func start(port: UInt16) {
         // Create a socket
         serverSocket = socket(AF_INET, SOCK_STREAM, 0)
@@ -129,33 +133,6 @@ class Server {
         }
     }
 
-    private func handleClient(_ clientSocket: Int32, clientID: UUID) {
-        while true {
-            var buffer = [UInt8](repeating: 0, count: 4096)
-            let bytesRead = read(clientSocket, &buffer, buffer.count)
-
-            if bytesRead > 0, let symmetricKey = symmetricKey {
-                let encryptedDataString = String(bytes: buffer[0..<bytesRead], encoding: .utf8)
-                print("Received encrypted data from client \(clientID): \(encryptedDataString ?? "")")
-                if let encryptedData = Data(base64Encoded: encryptedDataString ?? ""),
-                   let decryptedString = encryptionManager.decrypt(data: encryptedData, using: symmetricKey),
-                   let data = decryptedString.data(using: .utf8),
-                   let message = try? JSONDecoder().decode(Message.self, from: data) {
-                    processMessage(message, from: clientID)
-                    // Re-encrypt the message and send it back to the client
-                    if let reEncryptedData = encryptionManager.encrypt(message: decryptedString, using: symmetricKey) {
-                        print("Re-encrypted data: \(reEncryptedData.base64EncodedString())")
-                        sendBase64EncodedData(reEncryptedData, to: clientSocket)
-                    } else {
-                        print("Failed to re-encrypt message")
-                    }
-                } else {
-                    print("Failed to read or decrypt message from client: \(clientID)")
-                }
-            }
-            sendQueuedMessages(to: clientID)
-        }
-    }
 
     private func sendBase64EncodedData(_ data: Data, to socket: Int32) {
         let base64String = data.base64EncodedString()
@@ -165,14 +142,18 @@ class Server {
         }
     }
 
-
-
-
-
-
     private func processMessage(_ message: Message, from senderID: UUID) {
         print("Processing message from \(senderID): \(message.content)")
-        routeMessage(message, senderID: senderID, recipientID: message.recipient)
+        if let group = groups.first(where: { $0.id == message.recipient }) {
+            print("Routing message to group: \(group.name)")
+            for member in group.members {
+                if member != senderID { // Avoid sending the message back to the sender
+                    routeMessage(message, senderID: senderID, recipientID: member)
+                }
+            }
+        } else {
+            routeMessage(message, senderID: senderID, recipientID: message.recipient)
+        }
     }
 
     private func routeMessage(_ message: Message, senderID: UUID, recipientID: UUID? = nil) {
@@ -190,16 +171,71 @@ class Server {
         }
     }
 
+    private func handleClient(_ clientSocket: Int32, clientID: UUID) {
+        while true {
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            let bytesRead = read(clientSocket, &buffer, buffer.count)
+
+            if bytesRead > 0, let symmetricKey = symmetricKey {
+                let encryptedDataString = String(bytes: buffer[0..<bytesRead], encoding: .utf8)
+                print("Received encrypted data from client \(clientID): \(encryptedDataString ?? "")")
+                if let encryptedData = Data(base64Encoded: encryptedDataString ?? ""),
+                   let decryptedString = encryptionManager.decrypt(data: encryptedData, using: symmetricKey),
+                   let data = decryptedString.data(using: .utf8),
+                   let message = try? JSONDecoder().decode(Message.self, from: data) {
+                    print("Decrypted message content: \(decryptedString)")
+                    processMessage(message, from: clientID)
+                    // Re-encrypt the message and send it back to the recipient
+                    reEncryptAndSendMessage(message, originalContent: decryptedString, to: message.recipient, originalSender: clientID)
+                } else {
+                    print("Failed to read or decrypt message from client: \(clientID)")
+                }
+            }
+        }
+    }
+
+    private func reEncryptAndSendMessage(_ message: Message, originalContent: String, to recipientID: UUID, originalSender: UUID) {
+        guard let symmetricKey = symmetricKey else {
+            print("Symmetric key not available")
+            return
+        }
+
+        if let reEncryptedData = encryptionManager.encrypt(message: originalContent, using: symmetricKey) {
+            print("Re-encrypted data: \(reEncryptedData.base64EncodedString())")
+            sendBase64EncodedData(reEncryptedData, to: recipientID)
+        } else {
+            print("Failed to re-encrypt message")
+        }
+    }
+
+    private func sendBase64EncodedData(_ data: Data, to recipientID: UUID) {
+        guard let recipientSocket = clients[recipientID] else {
+            print("Recipient \(recipientID) is not connected")
+            return
+        }
+
+        let base64String = data.base64EncodedString()
+        base64String.withCString { cString in
+            let length = strlen(cString)
+            write(recipientSocket, cString, length)
+        }
+    }
+
     private func sendMessage(_ message: Message, to socket: Int32) {
         guard let symmetricKey = symmetricKey,
-              let encryptedData = encryptionManager.encrypt(message: message.content, using: symmetricKey) else {
+              let messageData = try? JSONEncoder().encode(message),
+              let encryptedData = encryptionManager.encrypt(message: String(data: messageData, encoding: .utf8)!, using: symmetricKey) else {
             print("Failed to encrypt message")
             return
         }
-        
-        let encryptedMessage = Message(sender: message.sender, recipient: message.recipient, content: String(data: encryptedData, encoding: .utf8) ?? "", timestamp: message.timestamp)
-        messageFormatter.sendMessage(encryptedMessage, to: socket)
+
+        print("Sending encrypted data: \(encryptedData.base64EncodedString())")
+        encryptedData.withUnsafeBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return }
+            write(socket, baseAddress, buffer.count)
+        }
     }
+
     
     private func broadcast(_ message: Message, excluding senderSocket: Int32) {
         for (clientID, clientSocket) in clients where clientSocket != senderSocket {

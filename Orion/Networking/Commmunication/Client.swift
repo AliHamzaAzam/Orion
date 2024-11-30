@@ -116,7 +116,7 @@ class Client {
             while true {
                 var buffer = [UInt8](repeating: 0, count: 4096)
                 let bytesRead = read(self.socketDescriptor, &buffer, buffer.count)
-
+                
                 if bytesRead > 0, let symmetricKey = self.symmetricKey {
                     let encryptedDataString = String(bytes: buffer[0..<bytesRead], encoding: .utf8)
                     print("Received encrypted data: \(encryptedDataString ?? "")")
@@ -124,6 +124,7 @@ class Client {
                        let decryptedString = self.encryptionManager.decrypt(data: encryptedData, using: symmetricKey),
                        let data = decryptedString.data(using: .utf8),
                        let message = try? JSONDecoder().decode(Message.self, from: data) {
+                        print("Decrypted message content: \(decryptedString)")
                         completion(message)
                     } else {
                         print("Failed to decrypt or decode message")

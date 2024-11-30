@@ -10,11 +10,15 @@ import CryptoKit
 
 class EncryptionManager {
     func encrypt(message: String, using key: SymmetricKey) -> Data? {
-        guard let data = message.data(using: .utf8) else { return nil }
+        guard let data = message.data(using: .utf8) else {
+            print("Error converting message to data")
+            return nil
+        }
         do {
             let sealedBox = try ChaChaPoly.seal(data, using: key)
-            print("Encrypted data: \(sealedBox.combined.base64EncodedString())")
-            return sealedBox.combined
+            let encryptedData = sealedBox.combined
+            print("Encrypted data: \(encryptedData.base64EncodedString())")
+            return encryptedData
         } catch {
             print("Error encrypting message: \(error)")
             return nil
@@ -34,6 +38,7 @@ class EncryptionManager {
         }
     }
 }
+
 
 
 
