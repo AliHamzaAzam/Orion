@@ -6,73 +6,61 @@
 //
 
 import SwiftUI
-import SwiftData
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @StateObject private var viewModel = ChatViewModel()
+    @State private var serverAddress: String = "127.0.0.1"
+    @State private var serverPort: String = "8080"
+    @State private var isConnected: Bool = false
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
-                }
-                .onDelete(perform: deleteItems)
-            }
-#if os(macOS)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-#endif
-            .toolbar {
-#if os(iOS)
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-#endif
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
-            }
-        } detail: {
-            Text("Select an item")
-        }
-    }
+        NavigationView {
+            VStack {
+                if !isConnected {
+                    // Connection UI
+                    VStack(spacing: 16) {
+                        TextField("Server Address", text: $serverAddress)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .padding(.horizontal)
 
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
+                        TextField("Server Port", text: $serverPort)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .padding(.horizontal)
 
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
+                        Button(action: connectToServer) {
+                            Text("Connect")
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .foregroundColor(.white)
+                                .background(Color.blue)
+                                .cornerRadius(8)
+                        }
+                        .padding(.horizontal)
+                    }
+                    .padding()
+                } else {
+                    // Show HomeView once connected
+                    HomeView(viewModel: viewModel)
+                }
             }
+            .frame(minWidth: 400, minHeight: 300) // Default macOS window size
         }
-        .onAppear {
-            viewModel.messages.append("Welcome to the Chat!")
-        }
+        .navigationTitle("Chat App")
     }
 
     private func connectToServer() {
-        guard let port = UInt16(serverPort) else {
+        if let port = UInt16(serverPort) {
+            viewModel.connectToServer(serverAddress: serverAddress, serverPort: port)
+            isConnected = true
+        } else {
             print("Invalid port number")
-            return
         }
-        viewModel.connectToServer(serverAddress: serverAddress, serverPort: port)
-        isConnected = true
     }
 }
 
-#Preview {
-    ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+// MARK: - Preview
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+    }
 }
