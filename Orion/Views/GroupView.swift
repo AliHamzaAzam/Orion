@@ -70,7 +70,7 @@ struct GroupChatView: View {
             ScrollView {
                 VStack(spacing: 8) {
                     ForEach(viewModel.filteredMessages(for: groupID), id: \.timestamp) { message in
-                        ChatRow(message: message, currentUser: viewModel.currentUserID)
+                        ChatRow(message: message, currentUser: viewModel.currentUserID, currentContact: viewModel.getContactName(for: message.sender))
                     }
                 }
             }

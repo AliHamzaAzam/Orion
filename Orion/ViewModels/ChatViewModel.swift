@@ -87,4 +87,8 @@ class ChatViewModel: ObservableObject {
     func getContactName(for id: UUID) -> String {
         return contacts.first { $0.id == id }?.name ?? "Unknown"
     }
+    
+    func getContact(id: UUID) -> Contact {
+        return contacts.first { $0.id == id } ?? Contact(id: UUID(), name: "Unknown", profileColor: .gray, initials: "UN")
+    }
 }

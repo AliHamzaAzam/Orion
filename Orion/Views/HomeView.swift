@@ -11,9 +11,7 @@ struct HomeView: View {
     @ObservedObject var viewModel: ChatViewModel
     @State private var isSettingsPresented = false
     @State private var isAddContactPresented = false
-    @State private var isAddGroupPresented = false
     @State private var selectedContact: UUID?
-    @State private var selectedGroup: UUID?
     @State private var isNavigatingToChat = false
 
     var body: some View {
@@ -21,7 +19,6 @@ struct HomeView: View {
             VStack {
                 List {
                     ContactSection(viewModel: viewModel, selectedContact: $selectedContact, isNavigatingToChat: $isNavigatingToChat)
-                    GroupSection(viewModel: viewModel, selectedGroup: $selectedGroup, isNavigatingToChat: $isNavigatingToChat)
                 }
                 .listStyle(PlainListStyle())
 
@@ -29,7 +26,6 @@ struct HomeView: View {
 
                 ActionButtons(
                     isAddContactPresented: $isAddContactPresented,
-                    isAddGroupPresented: $isAddGroupPresented,
                     isSettingsPresented: $isSettingsPresented,
                     viewModel: viewModel
                 )
@@ -37,14 +33,11 @@ struct HomeView: View {
             .navigationTitle("Chats")
             .navigationDestination(isPresented: $isNavigatingToChat) {
                 if let contact = selectedContact {
-                    ChatView(viewModel: viewModel, clientName: contact)
-                } else if let group = selectedGroup {
-                    GroupChatView(viewModel: viewModel, groupID: group)
+                    ChatView(viewModel: viewModel, client: viewModel.getContact(id: contact))
                 }
             }
-            .onAppear {
-                viewModel.retrieveGroups()
-            }
+            .padding()
+            .background(PlatformSpecificBackgroundColor().edgesIgnoringSafeArea(.all))
         }
     }
 }
@@ -82,44 +75,7 @@ struct ContactSection: View {
                         Spacer()
                     }
                 }
-            }
-        }
-    }
-}
-
-struct GroupSection: View {
-    @ObservedObject var viewModel: ChatViewModel
-    @Binding var selectedGroup: UUID?
-    @Binding var isNavigatingToChat: Bool
-
-    var body: some View {
-        Section(header: Text("Groups")) {
-            ForEach(viewModel.groups) { group in
-                Button(action: {
-                    selectedGroup = group.id
-                    isNavigatingToChat = true
-                }) {
-                    HStack {
-                        Circle()
-                            .fill(Color.orange)
-                            .frame(width: 50, height: 50)
-                            .overlay(
-                                Text(String(group.name.prefix(2)))
-                                    .font(.headline)
-                                    .foregroundColor(.white)
-                            )
-
-                        VStack(alignment: .leading) {
-                            Text(group.name)
-                                .font(.headline)
-                            Text(group.id.uuidString)
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                                .lineLimit(1)
-                        }
-                        Spacer()
-                    }
-                }
+                .buttonStyle(PlainButtonStyle())
             }
         }
     }
@@ -127,7 +83,6 @@ struct GroupSection: View {
 
 struct ActionButtons: View {
     @Binding var isAddContactPresented: Bool
-    @Binding var isAddGroupPresented: Bool
     @Binding var isSettingsPresented: Bool
     @ObservedObject var viewModel: ChatViewModel
 
@@ -156,24 +111,6 @@ struct ActionButtons: View {
                 }
 
                 Button(action: {
-                    isAddGroupPresented = true
-                }) {
-                    Image(systemName: "person.3")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 30, height: 30)
-                        .padding()
-                        .background(Color.orange)
-                        .foregroundColor(.white)
-                        .clipShape(Circle())
-                        .shadow(radius: 5)
-                }
-                .padding(.bottom, 16)
-                .sheet(isPresented: $isAddGroupPresented) {
-                    AddGroupView(viewModel: viewModel)
-                }
-
-                Button(action: {
                     isSettingsPresented = true
                 }) {
                     Image(systemName: "gearshape")
@@ -194,9 +131,6 @@ struct ActionButtons: View {
         }
     }
 }
-
-
-
 
 // MARK: - Add Contact View
 struct AddContactView: View {
@@ -236,7 +170,6 @@ struct AddContactView: View {
         .padding()
     }
 }
-
 
 // MARK: - Preview
 struct HomeView_Previews: PreviewProvider {

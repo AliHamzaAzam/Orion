@@ -7,7 +7,7 @@
 
 import Foundation
 
-@main
+//@main
 struct OrionServerApp {
     static func main() {
         

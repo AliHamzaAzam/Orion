@@ -10,7 +10,7 @@ import SwiftUI
 // MARK: - ChatView
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
-    let clientName: UUID // Unique identifier for the specific contact
+    let client: Contact // Unique identifier for the specific contact
 
     @State private var inputMessage: String = ""
 
@@ -19,8 +19,8 @@ struct ChatView: View {
             // Scrollable message list
             ScrollView {
                 VStack(spacing: 8) {
-                    ForEach(viewModel.filteredMessages(for: clientName), id: \.timestamp) { message in
-                        ChatRow(message: message, currentUser: viewModel.currentUserID)
+                    ForEach(viewModel.filteredMessages(for: client.id), id: \.timestamp) { message in
+                        ChatRow(message: message, currentUser: viewModel.currentUserID, currentContact: client.name)
                     }
                 }
             }
@@ -46,12 +46,12 @@ struct ChatView: View {
             }
             .padding()
         }
-        .navigationTitle("Chat with \(viewModel.getContactName(for: clientName))")
+        .navigationTitle("Chat with \(viewModel.getContactName(for: client.id))")
     }
 
     private func sendMessage() {
         guard !inputMessage.isEmpty else { return }
-        viewModel.sendMessageToRecipient(content: inputMessage, recipient: clientName)
+        viewModel.sendMessageToRecipient(content: inputMessage, recipient: client.id)
         inputMessage = ""
     }
 }
@@ -60,6 +60,7 @@ struct ChatView: View {
 struct ChatRow: View {
     let message: Message
     let currentUser: UUID
+    let currentContact: String
 
     var body: some View {
         HStack {
@@ -77,7 +78,7 @@ struct ChatRow: View {
                 }
             } else {
                 VStack(alignment: .leading) {
-                    Text("Contact")
+                    Text(currentContact)
                         .font(.caption)
                         .foregroundColor(.green)
                     Text(message.content)
@@ -97,15 +98,15 @@ struct ChatRow: View {
 struct ChatView_Previews: PreviewProvider {
     static var previews: some View {
         let viewModel = ChatViewModel()
-        let clientName = UUID()
-        viewModel.addContact(id: clientName, name: "Contact Name")
+        let client = Contact(id: UUID(), name: "Contact Name", profileColor: .green, initials: "CN")
+        viewModel.addContact(id: client.id, name: "Contact Name")
         
         // Simulate a few messages
         viewModel.messages = [
-            Message(sender: viewModel.currentUserID, recipient: clientName, content: "Hello!", timestamp: Date()),
-            Message(sender: clientName, recipient: viewModel.currentUserID, content: "Hi there!", timestamp: Date())
+            Message(sender: viewModel.currentUserID, recipient: client.id, content: "Hello!", timestamp: Date()),
+            Message(sender: client.id, recipient: viewModel.currentUserID, content: "Hi there!", timestamp: Date())
         ]
         
-        return ChatView(viewModel: viewModel, clientName: clientName)
+        return ChatView(viewModel: viewModel, client: client)
     }
 }
