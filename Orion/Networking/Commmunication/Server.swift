@@ -11,17 +11,13 @@ import CryptoKit
 class Server {
     private var serverSocket: Int32 = -1
     private var clients: [UUID: Int32] = [:]
-    private let messageFormatter = MessageFormatter()
     private let encryptionManager = EncryptionManager()
     private let keyExchange = KeyExchange()
     private var clientPublicKeys: [UUID: SecKey] = [:]
-    private var symmetricKey: SymmetricKey?
+    private var symmetricKey: SymmetricKey = SymmetricKey(size: .bits256) // Symmetric key to encrypt messages
     
     private var messageQueues: [UUID: [Message]] = [:] // Queues to store messages for offline clients
-    private var groups: [Group] = [
-        Group(id: UUID(), name: "Developers", members: [UUID(), UUID()]),
-        Group(id: UUID(), name: "Designers", members: [UUID(), UUID()])
-    ]
+    private var groups: [Group] = []
     
     func start(port: UInt16) {
         // Create a socket
@@ -60,9 +56,6 @@ class Server {
         }
 
         print("Server started on port \(port)")
-
-        // Generate symmetric key for communication
-        symmetricKey = SymmetricKey(size: .bits256)
 
         // Start accepting clients
         DispatchQueue.global().async {
@@ -106,8 +99,7 @@ class Server {
                     clientPublicKeys[clientID] = clientPublicKey
 
                     // Encrypt symmetric key with client's public key and send it to client
-                    if let symmetricKey = symmetricKey,
-                       let encryptedKey = keyExchange.encryptKey(symmetricKey, with: clientPublicKey) {
+                    if let encryptedKey = keyExchange.encryptKey(symmetricKey, with: clientPublicKey) {
                         encryptedKey.withUnsafeBytes { buffer in
                             guard let baseAddress = buffer.baseAddress else { return }
                             write(clientSocket, baseAddress, buffer.count)
@@ -144,16 +136,8 @@ class Server {
 
     private func processMessage(_ message: Message, from senderID: UUID) {
         print("Processing message from \(senderID): \(message.content)")
-        if let group = groups.first(where: { $0.id == message.recipient }) {
-            print("Routing message to group: \(group.name)")
-            for member in group.members {
-                if member != senderID { // Avoid sending the message back to the sender
-                    routeMessage(message, senderID: senderID, recipientID: member)
-                }
-            }
-        } else {
-            routeMessage(message, senderID: senderID, recipientID: message.recipient)
-        }
+        routeMessage(message, senderID: senderID, recipientID: message.recipient)
+        
     }
 
     private func routeMessage(_ message: Message, senderID: UUID, recipientID: UUID? = nil) {
@@ -176,29 +160,61 @@ class Server {
             var buffer = [UInt8](repeating: 0, count: 4096)
             let bytesRead = read(clientSocket, &buffer, buffer.count)
 
-            if bytesRead > 0, let symmetricKey = symmetricKey {
+            if bytesRead > 0 {
                 let encryptedDataString = String(bytes: buffer[0..<bytesRead], encoding: .utf8)
                 print("Received encrypted data from client \(clientID): \(encryptedDataString ?? "")")
-                if let encryptedData = Data(base64Encoded: encryptedDataString ?? ""),
-                   let decryptedString = encryptionManager.decrypt(data: encryptedData, using: symmetricKey),
-                   let data = decryptedString.data(using: .utf8),
-                   let message = try? JSONDecoder().decode(Message.self, from: data) {
-                    print("Decrypted message content: \(decryptedString)")
-                    processMessage(message, from: clientID)
-                    // Re-encrypt the message and send it back to the recipient
-                    reEncryptAndSendMessage(message, originalContent: decryptedString, to: message.recipient, originalSender: clientID)
+                if let encryptedData = Data(base64Encoded: encryptedDataString ?? "") {
+                    print("Encrypted data size: \(encryptedData.count) bytes")
+                    if let decryptedString = encryptionManager.decrypt(data: encryptedData, using: symmetricKey) {
+                        print("Decrypted data: \(decryptedString)")
+                        
+                        if let data = decryptedString.data(using: .utf8) {
+                            do {
+                                if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+                                   let event = json["event"] as? String {
+                                    switch event {
+                                    case "group_joined", "group_created":
+                                        if let groupData = json["group"] as? [String: Any],
+                                           let groupIDString = groupData["id"] as? String,
+                                           let groupID = UUID(uuidString: groupIDString),
+                                           let name = groupData["name"] as? String,
+                                           let members = groupData["members"] as? [String] {
+                                            let memberUUIDs = members.compactMap { UUID(uuidString: $0) }
+                                            let group = Group(id: groupID, name: name, members: memberUUIDs)
+                                            groups.append(group)
+                                            broadcastGroupCreation(group)
+                                            print("Group joined: \(name)")
+                                        } else {
+                                            print("Invalid group data")
+                                        }
+                                    default:
+                                        print("Unhandled event: \(event)")
+                                    }
+                                } else {
+                                    let message = try JSONDecoder().decode(Message.self, from: data)
+                                    processMessage(message, from: clientID)
+                                    reEncryptAndSendMessage(message, originalContent: decryptedString, to: message.recipient, originalSender: clientID)
+                                }
+                            } catch {
+                                print("Failed to process JSON: \(error.localizedDescription)")
+                            }
+                        } else {
+                            print("Failed to convert decrypted string to data")
+                        }
+                    } else {
+                        print("Failed to decrypt data")
+                    }
                 } else {
-                    print("Failed to read or decrypt message from client: \(clientID)")
+                    print("Failed to decode Base64 data")
                 }
             }
         }
     }
 
+
+
+
     private func reEncryptAndSendMessage(_ message: Message, originalContent: String, to recipientID: UUID, originalSender: UUID) {
-        guard let symmetricKey = symmetricKey else {
-            print("Symmetric key not available")
-            return
-        }
 
         if let reEncryptedData = encryptionManager.encrypt(message: originalContent, using: symmetricKey) {
             print("Re-encrypted data: \(reEncryptedData.base64EncodedString())")
@@ -222,8 +238,7 @@ class Server {
     }
 
     private func sendMessage(_ message: Message, to socket: Int32) {
-        guard let symmetricKey = symmetricKey,
-              let messageData = try? JSONEncoder().encode(message),
+        guard let messageData = try? JSONEncoder().encode(message),
               let encryptedData = encryptionManager.encrypt(message: String(data: messageData, encoding: .utf8)!, using: symmetricKey) else {
             print("Failed to encrypt message")
             return
@@ -255,6 +270,49 @@ class Server {
             print("Queued messages sent to client: \(clientID)")
         }
     }
+    
+    func createGroup(name: String, members: [UUID]) {
+        let group = Group(id: UUID(), name: name, members: members)
+        groups.append(group)
+        broadcastGroupCreation(group)
+    }
+
+    private func broadcastGroupCreation(_ group: Group) {
+        let message = [
+            "event": "group_created",
+            "group": [
+                "id": group.id.uuidString,
+                "name": group.name,
+                "members": group.members.map { $0.uuidString }
+            ]
+        ] as [String: Any]
+        
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: message, options: [])
+            print("Serialized group creation message: \(String(data: jsonData, encoding: .utf8)!)")
+            if let encryptedData = encryptionManager.encrypt(message: String(data: jsonData, encoding: .utf8)!, using: symmetricKey) {
+                let base64EncodedString = encryptedData.base64EncodedString()
+                print("Broadcasting group creation. Base64 encoded data size: \(base64EncodedString.count) characters")
+
+                base64EncodedString.withCString { cString in
+                    let length = strlen(cString)
+                    for (clientID, clientSocket) in clients {
+                        if group.members.contains(clientID) {
+                            write(clientSocket, cString, length)
+                        }
+                    }
+                }
+
+                print("Broadcasted group creation: \(group.name)")
+            } else {
+                print("Failed to encrypt group creation message")
+            }
+        } catch {
+            print("Failed to serialize group creation message: \(error)")
+        }
+    }
+
+
 
     func stop() {
         for client in clients.values {
@@ -264,4 +322,6 @@ class Server {
         print("Server stopped.")
     }
 }
+
+
 

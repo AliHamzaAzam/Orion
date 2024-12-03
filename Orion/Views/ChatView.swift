@@ -98,7 +98,7 @@ struct ChatView_Previews: PreviewProvider {
     static var previews: some View {
         let viewModel = ChatViewModel()
         let clientName = UUID()
-        viewModel.addContact(id: clientName)
+        viewModel.addContact(id: clientName, name: "Contact Name")
         
         // Simulate a few messages
         viewModel.messages = [

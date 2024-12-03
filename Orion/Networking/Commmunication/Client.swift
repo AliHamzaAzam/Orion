@@ -13,12 +13,12 @@ class Client {
     private let serverAddress: String
     private let serverPort: UInt16
     private let id: UUID
-    private let messageFormatter = MessageFormatter()
     private let encryptionManager = EncryptionManager()
     private let keyExchange = KeyExchange()
     private var symmetricKey: SymmetricKey?
     
     private var messageQueue: [Message] = [] // Queue to store messages when offline
+    private var groups: [Group] = [] // List of groups the client is part of
 
     init(serverAddress: String, serverPort: UInt16) {
         self.serverAddress = serverAddress
@@ -120,15 +120,19 @@ class Client {
                 if bytesRead > 0, let symmetricKey = self.symmetricKey {
                     let encryptedDataString = String(bytes: buffer[0..<bytesRead], encoding: .utf8)
                     print("Received encrypted data: \(encryptedDataString ?? "")")
-                    if let encryptedData = Data(base64Encoded: encryptedDataString ?? ""),
-                       let decryptedString = self.encryptionManager.decrypt(data: encryptedData, using: symmetricKey),
-                       let data = decryptedString.data(using: .utf8),
-                       let message = try? JSONDecoder().decode(Message.self, from: data) {
-                        print("Decrypted message content: \(decryptedString)")
-                        completion(message)
+                    if let encryptedData = Data(base64Encoded: encryptedDataString ?? "") {
+                        print("Encrypted data size: \(encryptedData.count) bytes")
+                        if let decryptedString = self.encryptionManager.decrypt(data: encryptedData, using: symmetricKey) {
+                            print("Decrypted data: \(decryptedString)")
+                            self.handleServerEvent(decryptedString, completion: completion)
+                        } else {
+                            print("Failed to decrypt or decode message")
+                        }
                     } else {
-                        print("Failed to decrypt or decode message")
+                        print("Failed to decode Base64 data")
                     }
+                } else if bytesRead > 0 {
+                    print("Received unexpected data")
                 } else if bytesRead == 0 {
                     print("Server disconnected")
                     self.disconnect()
@@ -137,6 +141,43 @@ class Client {
             }
         }
     }
+
+    private func handleServerEvent(_ jsonString: String, completion: @escaping (Message) -> Void) {
+        guard let data = jsonString.data(using: .utf8) else {
+            print("Invalid UTF-8 string")
+            return
+        }
+        
+        do {
+            if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+               let event = json["event"] as? String {
+                switch event {
+                case "group_created":
+                    if let groupData = json["group"] as? [String: Any],
+                       let groupIDString = groupData["id"] as? String,
+                       let groupID = UUID(uuidString: groupIDString),
+                       let name = groupData["name"] as? String,
+                       let members = groupData["members"] as? [String] {
+                        let memberUUIDs = members.compactMap { UUID(uuidString: $0) }
+                        let group = Group(id: groupID, name: name, members: memberUUIDs)
+                        self.groups.append(group)
+                        print("Added new group: \(name)")
+                    } else {
+                        print("Invalid group data")
+                    }
+                default:
+                    print("Unhandled event: \(event)")
+                }
+            } else {
+                // Attempt to decode as a `Message` object
+                let message = try JSONDecoder().decode(Message.self, from: data)
+                completion(message)
+            }
+        } catch {
+            print("Failed to process JSON: \(error.localizedDescription)")
+        }
+    }
+
     
     func queueMessage(_ content: String, to recipientID: UUID? = nil) {
         let message = Message(sender: id, recipient: recipientID ?? UUID(), content: content, timestamp: Date())
@@ -169,6 +210,65 @@ class Client {
             }
         }
     }
+    
+    
+    func joinGroup(_ group: Group) {
+        groups.append(group)
+        print("Joined group: \(group.name)")
+
+        // Inform the server about the new group
+        let groupData: [String: Any] = [
+            "id": group.id.uuidString,
+            "name": group.name,
+            "members": group.members.map { $0.uuidString } + [id.uuidString]
+        ]
+        let eventData: [String: Any] = [
+            "event": "group_joined",
+            "group": groupData
+        ]
+        do {
+            let eventData = try JSONSerialization.data(withJSONObject: eventData)
+            if let encryptedData = encryptionManager.encrypt(message: String(data: eventData, encoding: .utf8)!, using: symmetricKey!) {
+                let base64String = encryptedData.base64EncodedString()
+                print("Sending group joined event to server. Data size: \(base64String.count) characters")
+                base64String.withCString { cString in
+                    let length = strlen(cString)
+                    write(socketDescriptor, cString, length)
+                }
+                print("Sent group joined event to server: \(base64String)")
+            } else {
+                print("Failed to encrypt event data")
+            }
+        } catch {
+            print("Failed to serialize event data: \(error)")
+        }
+    }
+
+
+    
+    func sendMessageToGroup(_ content: String, groupID: UUID) {
+        guard groups.first(where: { $0.id == groupID }) != nil else {
+            print("Group not found")
+            return
+        }
+        
+        let message = Message(sender: id, recipient: groupID, content: content, timestamp: Date())
+        if let messageData = try? JSONEncoder().encode(message),
+              let encryptedData = encryptionManager.encrypt(message: String(data: messageData, encoding: .utf8)!, using: symmetricKey!) {
+            print("Sending encrypted data: \(encryptedData.base64EncodedString())")
+            sendBase64EncodedData(encryptedData)
+        } else {
+            print("Failed to encrypt message")
+        }
+        // Try to send the message if connected
+        if socketDescriptor >= 0 {
+            sendQueuedMessages()
+        }
+    }
+    
+    func retrieveGroups() -> [Group] {
+        return groups
+    }
 
 
     func disconnect() {
@@ -182,4 +282,6 @@ class Client {
         print("Disconnected from server")
     }
 }
+
+
 
